@@ -35,9 +35,8 @@ export function StreamAudio({ stream }: { stream: MediaStream | null }) {
     const audio = ref.current;
     if (!audio) return;
     audio.srcObject = stream;
-    if (stream) void audio.play().catch(() => {});
+    if (stream) audio.play().catch((err) => console.warn('[watch] audio play blocked:', err));
   }, [stream]);
 
-  // <audio> is the lightest way to play audio — no AudioContext overhead
   return <audio ref={ref} autoPlay playsInline style={{ display: 'none' }} />;
 }

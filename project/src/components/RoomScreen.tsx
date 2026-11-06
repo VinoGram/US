@@ -1,5 +1,6 @@
 import { Box, Flex, HStack, Icon, Text, Button } from '@chakra-ui/react';
-import { LogOut, TriangleAlert, Mic, MicOff, Maximize2 } from 'lucide-react';
+import { LogOut, TriangleAlert, Mic, MicOff, Maximize2, Volume2 } from 'lucide-react';
+import { useState } from 'react';
 
 const isInExtensionPanel = () =>
   typeof chrome !== 'undefined' && !!chrome.runtime?.id && window.innerWidth < 600;
@@ -17,6 +18,7 @@ interface RoomScreenProps {
 export default function RoomScreen({ roomCode, maxPeers, onLeave }: RoomScreenProps) {
   const room = useWatchRoom(roomCode, maxPeers);
   const connected = room.status === 'connected';
+  const [voicesUnmuted, setVoicesUnmuted] = useState(false);
 
   let statusLabel: string;
   if (room.status === 'error') statusLabel = 'Disconnected';
@@ -77,6 +79,18 @@ export default function RoomScreen({ roomCode, maxPeers, onLeave }: RoomScreenPr
             />
             <Text>{statusLabel}</Text>
           </HStack>
+          {/* Unmute voices button — shown when peers have active mics */}
+          {room.micStreams.length > 0 && !voicesUnmuted && (
+            <Button
+              size="sm"
+              leftIcon={<Icon as={Volume2} boxSize={4} />}
+              colorScheme="yellow"
+              borderRadius="full"
+              onClick={() => setVoicesUnmuted(true)}
+            >
+              Unmute voices
+            </Button>
+          )}
           {isInExtensionPanel() && (
             <Button
               variant="ghost"
@@ -132,8 +146,8 @@ export default function RoomScreen({ roomCode, maxPeers, onLeave }: RoomScreenPr
         )}
       </Flex>
 
-      {/* Play all remote mic streams */}
-      {room.micStreams.map((s, i) => <StreamAudio key={i} stream={s} />)}
+      {/* Mic audio — only mount after user gesture to satisfy autoplay policy */}
+      {voicesUnmuted && room.micStreams.map((s, i) => <StreamAudio key={i} stream={s} />)}
     </Flex>
   );
 }

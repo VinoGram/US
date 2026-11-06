@@ -9,9 +9,17 @@ const DEFAULT_META: PresenceMeta = { sharing: false, micOn: false };
 
 function slotId(roomCode: string, slot: number) { return `${roomCode}-${slot}`; }
 
+// A placeholder track is the 2x2 silent canvas/audio we create ourselves.
+// We detect it by label — real getUserMedia/getDisplayMedia tracks have a device label.
+// Placeholder AudioContext tracks have an empty label.
+function isPlaceholderTrack(track: MediaStreamTrack): boolean {
+  return track.label === '' || track.label.startsWith('MediaStreamAudioDestinationNode');
+}
+
 interface PeerState {
   dataConn: DataConnection | null;
   mediaConn: MediaConnection | null;
+  pc: RTCPeerConnection | null;       // resolved RTCPeerConnection, stored once
   meta: PresenceMeta;
   tracks: Partial<Record<TrackSlot, MediaStreamTrack>>;
 }
@@ -53,12 +61,12 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
     );
   };
 
+  // Push a track to all connected peers via the stored pc reference
   const setLocalTrack = (slot: TrackSlot, track: MediaStreamTrack | null) => {
     localTracksRef.current[slot] = track;
     if (!isHostRef.current && slot !== TRACK_SLOT.mic) return;
     Object.values(peersRef.current).forEach(p => {
-      const pc = p.mediaConn?.peerConnection;
-      if (pc) setSlotTrack(pc, slot, track);
+      if (p.pc) setSlotTrack(p.pc, slot, track);
     });
   };
 
@@ -140,10 +148,12 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
 
   const setupDataConn = (conn: DataConnection) => {
     const peerId = conn.peer;
+    // Preserve existing tracks/meta/pc — data and media connections can arrive in any order
     updatePeer(peerId, {
       dataConn: conn,
       meta: peersRef.current[peerId]?.meta ?? DEFAULT_META,
       tracks: peersRef.current[peerId]?.tracks ?? {},
+      pc: peersRef.current[peerId]?.pc ?? null,
       mediaConn: peersRef.current[peerId]?.mediaConn ?? null,
     });
     conn.on('open', () => {
@@ -162,13 +172,12 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
     const peerId = mc.peer;
     updatePeer(peerId, {
       mediaConn: mc,
+      pc: peersRef.current[peerId]?.pc ?? null,
       dataConn: peersRef.current[peerId]?.dataConn ?? null,
       meta: peersRef.current[peerId]?.meta ?? DEFAULT_META,
       tracks: peersRef.current[peerId]?.tracks ?? {},
     });
 
-    // Poll for pc — PeerJS sets _pc synchronously during answer/call but
-    // the public peerConnection getter may lag. Cap at 2s.
     const waitForPc = (attempts = 0) => {
       const pc: RTCPeerConnection | undefined =
         (mc as unknown as { _pc?: RTCPeerConnection })._pc ?? mc.peerConnection ?? undefined;
@@ -177,13 +186,17 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
         return;
       }
 
+      // Store the resolved pc so setLocalTrack can use it directly
+      updatePeer(peerId, { pc });
+
       let stopAdapt: (() => void) | null = null;
 
       pc.addEventListener('iceconnectionstatechange', () => {
         if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
           setStatus('connected');
           if (isHostRef.current) {
-            // Push any tracks the host already has
+            console.log('[host] ICE connected, pushing tracks:', localTracksRef.current);
+            console.log('[host] transceivers:', pc.getTransceivers().map(t => [t.direction, t.currentDirection, t.sender.track?.kind]));
             Object.entries(localTracksRef.current).forEach(([slot, track]) => {
               if (track) setSlotTrack(pc, Number(slot) as TrackSlot, track);
             });
@@ -199,10 +212,10 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
       });
 
       pc.addEventListener('track', (event) => {
-        // Map track to slot by transceiver index
         const transceivers = pc.getTransceivers();
         const slot = transceivers.findIndex(t => t.receiver === event.receiver);
         if (slot === -1) return;
+        console.log(`[track] slot=${slot} kind=${event.track.kind} readyState=${event.track.readyState} muted=${event.track.muted}`);
         updatePeer(peerId, {
           tracks: { ...peersRef.current[peerId]?.tracks, [slot as TrackSlot]: event.track },
         });
@@ -210,7 +223,7 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
 
       mc.on('close', () => {
         stopAdapt?.();
-        updatePeer(peerId, { tracks: {} });
+        updatePeer(peerId, { tracks: {}, pc: null });
       });
     };
 
@@ -231,15 +244,11 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
         const host = slot === 0;
         isHostRef.current = host;
         setIsHost(host);
+        console.log(`[peer] opened as ${host ? 'HOST' : 'GUEST'} id=${id}`);
 
         if (!host) {
-          // Guest: open data channel to host
           const conn = peer.connect(slotId(roomCode, 0), { reliable: true });
           setupDataConn(conn);
-
-          // Guest initiates the media call.
-          // We create a stream with 3 silent tracks so the offer SDP contains
-          // all 3 transceivers in the right order — host just answers, no addTransceiver needed.
           const mc = peer.call(slotId(roomCode, 0), createPlaceholderStream());
           if (mc) setupMediaConn(mc);
         } else {
@@ -248,6 +257,7 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
       });
 
       peer.on('error', (err) => {
+        console.warn('[peer] error', err);
         if ((err as { type?: string }).type === 'unavailable-id') {
           peer.destroy();
           trySlot(slot + 1);
@@ -258,8 +268,8 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
 
       peer.on('connection', (conn) => setupDataConn(conn));
 
-      // Host answers with placeholder stream so all 3 transceivers are sendrecv
       peer.on('call', (mc) => {
+        console.log('[host] incoming call from', mc.peer);
         mc.answer(createPlaceholderStream());
         setupMediaConn(mc);
       });
@@ -290,9 +300,12 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
 
   const peerList = Object.values(peers);
 
-  // Use meta.sharing as the source of truth — not track presence,
-  // since placeholder tracks arrive immediately and would show a black screen.
-  const sharingPeer = peerList.find(p => p.meta.sharing);
+  // A real screen track is live and unmuted — placeholder tracks are muted/ended
+  const sharingPeer = peerList.find(p => {
+    const t = p.tracks[TRACK_SLOT.screenVideo];
+    return t && !isPlaceholderTrack(t);
+  });
+
   const screenVideoTrack = sharingPeer?.tracks[TRACK_SLOT.screenVideo] ?? null;
   const screenAudioTrack = sharingPeer?.tracks[TRACK_SLOT.screenAudio] ?? null;
 
@@ -302,13 +315,16 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
   );
 
   const partnerScreenAudio = useMemo(
-    () => screenAudioTrack ? new MediaStream([screenAudioTrack]) : null,
+    () => screenAudioTrack && !isPlaceholderTrack(screenAudioTrack) ? new MediaStream([screenAudioTrack]) : null,
     [screenAudioTrack]
   );
 
   const micStreams = useMemo(() =>
     peerList
-      .filter(p => p.meta.micOn && p.tracks[TRACK_SLOT.mic])
+      .filter(p => {
+        const t = p.tracks[TRACK_SLOT.mic];
+        return t && !isPlaceholderTrack(t);
+      })
       .map(p => new MediaStream([p.tracks[TRACK_SLOT.mic]!])),
     [peers]
   );
@@ -318,7 +334,7 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
     isHost,
     partnerOnline: peerList.length > 0,
     partnerCount: peerList.length,
-    partnerSharing: peerList.some(p => p.meta.sharing),
+    partnerSharing: peerList.some(p => p.meta.sharing) || !!screenVideoTrack,
     partnerScreen,
     partnerScreenAudio,
     micStreams,
