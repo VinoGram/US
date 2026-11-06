@@ -1,8 +1,11 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ChakraProvider, ColorModeScript, extendTheme } from '@chakra-ui/react';
+import { inject } from '@vercel/analytics';
 import App from './App.tsx';
 import './index.css';
+
+inject();
 
 const FONT_STACK = "'SF Mono', 'SFMono-Regular', 'Segoe UI Variable', 'Segoe UI', 'Roboto Flex', Roboto, ui-monospace, 'Cascadia Mono', Menlo, Monaco, Consolas, monospace";
 
