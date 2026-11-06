@@ -43,7 +43,19 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
   const peersRef = useRef<Record<string, PeerState>>({});
 
   const updatePeer = (peerId: string, patch: Partial<PeerState>) => {
-    peersRef.current = { ...peersRef.current, [peerId]: { ...peersRef.current[peerId], ...patch } };
+    const prev = peersRef.current[peerId];
+    peersRef.current = {
+      ...peersRef.current,
+      [peerId]: {
+        dataConn: null,
+        mediaConn: null,
+        pc: null,
+        meta: DEFAULT_META,
+        tracks: {},
+        ...prev,
+        ...patch,
+      },
+    };
     setPeers({ ...peersRef.current });
   };
 
@@ -56,9 +68,13 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
   const broadcastMeta = (patch: Partial<PresenceMeta>) => {
     selfMetaRef.current = { ...selfMetaRef.current, ...patch };
     setSelfMeta(selfMetaRef.current);
-    Object.values(peersRef.current).forEach(p =>
-      p.dataConn?.send({ type: 'meta', payload: selfMetaRef.current })
-    );
+    Object.values(peersRef.current).forEach(p => {
+      try {
+        if (p.dataConn?.open) p.dataConn.send({ type: 'meta', payload: selfMetaRef.current });
+      } catch (e) {
+        console.warn('[watch] meta send failed', e);
+      }
+    });
   };
 
   // Push a track to all connected peers via the stored pc reference
@@ -92,34 +108,31 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
       return;
     }
     setMediaError(null);
+    let stream: MediaStream;
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia(getScreenConstraints());
-      const [video] = stream.getVideoTracks();
-      const [audio] = stream.getAudioTracks();
-      if (!video) { stream.getTracks().forEach(t => t.stop()); return; }
-      stopShare();
-      video.addEventListener('ended', stopShare);
-      setLocalTrack(TRACK_SLOT.screenVideo, video);
-      setLocalTrack(TRACK_SLOT.screenAudio, audio ?? null);
-      setLocalScreen(new MediaStream([video]));
-      broadcastMeta({ sharing: true });
+      stream = await navigator.mediaDevices.getDisplayMedia(getScreenConstraints());
     } catch (e) {
       if (e instanceof DOMException && e.name === 'NotAllowedError') return;
+      // Retry without audio constraints (some browsers reject them)
       try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-        const [video] = stream.getVideoTracks();
-        if (!video) { stream.getTracks().forEach(t => t.stop()); return; }
-        stopShare();
-        video.addEventListener('ended', stopShare);
-        setLocalTrack(TRACK_SLOT.screenVideo, video);
-        setLocalTrack(TRACK_SLOT.screenAudio, null);
-        setLocalScreen(new MediaStream([video]));
-        broadcastMeta({ sharing: true });
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       } catch (e2) {
         if (e2 instanceof DOMException && e2.name === 'NotAllowedError') return;
         setMediaError(`Could not start screen sharing: ${e2 instanceof Error ? e2.message : String(e2)}`);
+        return;
       }
     }
+    const [video] = stream.getVideoTracks();
+    const [audio] = stream.getAudioTracks();
+    if (!video) { stream.getTracks().forEach(t => t.stop()); return; }
+    // Release previous screen tracks without broadcasting meta:false
+    localTracksRef.current[TRACK_SLOT.screenVideo]?.stop();
+    localTracksRef.current[TRACK_SLOT.screenAudio]?.stop();
+    setLocalTrack(TRACK_SLOT.screenVideo, video);
+    setLocalTrack(TRACK_SLOT.screenAudio, audio ?? null);
+    video.addEventListener('ended', stopShare);
+    setLocalScreen(new MediaStream([video]));
+    broadcastMeta({ sharing: true });
   };
 
   const toggleMic = async () => {

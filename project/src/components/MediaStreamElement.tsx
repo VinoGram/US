@@ -13,18 +13,18 @@ export function StreamVideo({ stream, muted = false, style }: StreamElementProps
     const video = ref.current;
     if (!video) return;
     video.srcObject = stream;
-    if (stream) video.play().catch((err) => console.warn('[watch] play blocked:', err));
+    if (!stream) return;
+    const tryPlay = () => video.play().catch(err => console.warn('[watch] play blocked:', err));
+    tryPlay();
+    const track = stream.getVideoTracks()[0];
+    if (track) {
+      track.addEventListener('unmute', tryPlay);
+      return () => track.removeEventListener('unmute', tryPlay);
+    }
   }, [stream]);
 
   return (
-    <video
-      ref={ref}
-      autoPlay
-      playsInline
-      muted={muted}
-      style={style}
-      disablePictureInPicture
-    />
+    <video ref={ref} autoPlay playsInline muted={muted} style={style} disablePictureInPicture />
   );
 }
 

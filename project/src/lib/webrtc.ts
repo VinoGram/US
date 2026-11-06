@@ -45,7 +45,8 @@ export function getScreenConstraints(): DisplayMediaStreamOptions {
 export function createPlaceholderStream(): MediaStream {
   const canvas = document.createElement('canvas');
   canvas.width = 2; canvas.height = 2;
-  const [video] = canvas.captureStream(0).getVideoTracks();
+  canvas.getContext('2d')?.fillRect(0, 0, 2, 2);
+  const [video] = canvas.captureStream(1).getVideoTracks();
   const ctx = new AudioContext();
   const [a1] = ctx.createMediaStreamDestination().stream.getAudioTracks();
   const [a2] = ctx.createMediaStreamDestination().stream.getAudioTracks();
