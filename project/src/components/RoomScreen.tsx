@@ -22,10 +22,11 @@ export default function RoomScreen({ roomCode, maxPeers, onLeave }: RoomScreenPr
   if (room.status === 'connecting') statusLabel = 'Joining room';
   else if (room.status === 'error') statusLabel = 'Disconnected';
   else if (room.partnerCount > 0) statusLabel = room.isHost ? `${room.partnerCount} watching` : 'Watching live';
+  else if (connected && !room.isHost) statusLabel = 'Connected';
 
   const dotColor =
     room.status === 'error' ? 'red.400' :
-    room.partnerOnline && connected ? 'green.400' : 'yellow.300';
+    connected ? 'green.400' : 'yellow.300';
 
   return (
     <Flex direction="column" minH="100vh" bg="gray.950" color="whiteAlpha.900">
