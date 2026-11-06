@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import Peer, { type DataConnection, type MediaConnection } from 'peerjs';
-import { TRACK_SLOT, type TrackSlot, PEER_CONFIG, setSlotTrack, getScreenConstraints, isIOS, adaptBitrate } from '@/lib/webrtc';
+import { TRACK_SLOT, type TrackSlot, PEER_CONFIG, setSlotTrack, getScreenConstraints, isIOS, adaptBitrate, createPlaceholderStream } from '@/lib/webrtc';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'error';
 
@@ -140,7 +140,12 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
 
   const setupDataConn = (conn: DataConnection) => {
     const peerId = conn.peer;
-    updatePeer(peerId, { dataConn: conn, meta: DEFAULT_META, tracks: {}, mediaConn: peersRef.current[peerId]?.mediaConn ?? null });
+    updatePeer(peerId, {
+      dataConn: conn,
+      meta: peersRef.current[peerId]?.meta ?? DEFAULT_META,
+      tracks: peersRef.current[peerId]?.tracks ?? {},
+      mediaConn: peersRef.current[peerId]?.mediaConn ?? null,
+    });
     conn.on('open', () => {
       setStatus('connected');
       conn.send({ type: 'meta', payload: selfMetaRef.current });
@@ -235,19 +240,7 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
           // Guest initiates the media call.
           // We create a stream with 3 silent tracks so the offer SDP contains
           // all 3 transceivers in the right order — host just answers, no addTransceiver needed.
-          const ctx = new AudioContext();
-          const dest = ctx.createMediaStreamDestination();
-          // slot 0: video (silent black frame via canvas)
-          const canvas = document.createElement('canvas');
-          canvas.width = 2; canvas.height = 2;
-          const canvasStream = canvas.captureStream(0);
-          const [silentVideo] = canvasStream.getVideoTracks();
-          // slot 1 & 2: silent audio
-          const silentAudio1 = dest.stream.getAudioTracks()[0];
-          const silentAudio2 = ctx.createMediaStreamDestination().stream.getAudioTracks()[0];
-
-          const callStream = new MediaStream([silentVideo, silentAudio1, silentAudio2].filter(Boolean));
-          const mc = peer.call(slotId(roomCode, 0), callStream);
+          const mc = peer.call(slotId(roomCode, 0), createPlaceholderStream());
           if (mc) setupMediaConn(mc);
         } else {
           setStatus('connected');
@@ -265,9 +258,9 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
 
       peer.on('connection', (conn) => setupDataConn(conn));
 
-      // Host answers incoming calls — no addTransceiver, slots already set by guest's offer
+      // Host answers with placeholder stream so all 3 transceivers are sendrecv
       peer.on('call', (mc) => {
-        mc.answer(new MediaStream());
+        mc.answer(createPlaceholderStream());
         setupMediaConn(mc);
       });
     };
@@ -296,10 +289,12 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
   }, [roomCode]);
 
   const peerList = Object.values(peers);
-  const hostPeer = peerList.find(p => p.tracks[TRACK_SLOT.screenVideo]);
 
-  const screenVideoTrack = hostPeer?.tracks[TRACK_SLOT.screenVideo] ?? null;
-  const screenAudioTrack = hostPeer?.tracks[TRACK_SLOT.screenAudio] ?? null;
+  // Use meta.sharing as the source of truth — not track presence,
+  // since placeholder tracks arrive immediately and would show a black screen.
+  const sharingPeer = peerList.find(p => p.meta.sharing);
+  const screenVideoTrack = sharingPeer?.tracks[TRACK_SLOT.screenVideo] ?? null;
+  const screenAudioTrack = sharingPeer?.tracks[TRACK_SLOT.screenAudio] ?? null;
 
   const partnerScreen = useMemo(() => {
     if (!screenVideoTrack) return null;
@@ -308,7 +303,7 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
 
   const micStreams = useMemo(() =>
     peerList
-      .filter(p => p.tracks[TRACK_SLOT.mic])
+      .filter(p => p.meta.micOn && p.tracks[TRACK_SLOT.mic])
       .map(p => new MediaStream([p.tracks[TRACK_SLOT.mic]!])),
     [peers]
   );
@@ -318,7 +313,7 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
     isHost,
     partnerOnline: peerList.length > 0,
     partnerCount: peerList.length,
-    partnerSharing: peerList.some(p => p.meta.sharing || !!p.tracks[TRACK_SLOT.screenVideo]),
+    partnerSharing: peerList.some(p => p.meta.sharing),
     partnerScreen,
     micStreams,
     localScreen,

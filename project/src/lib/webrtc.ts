@@ -42,6 +42,16 @@ export function getScreenConstraints(): DisplayMediaStreamOptions {
   };
 }
 
+export function createPlaceholderStream(): MediaStream {
+  const canvas = document.createElement('canvas');
+  canvas.width = 2; canvas.height = 2;
+  const [video] = canvas.captureStream(0).getVideoTracks();
+  const ctx = new AudioContext();
+  const [a1] = ctx.createMediaStreamDestination().stream.getAudioTracks();
+  const [a2] = ctx.createMediaStreamDestination().stream.getAudioTracks();
+  return new MediaStream([video, a1, a2].filter(Boolean));
+}
+
 export function setSlotTrack(pc: RTCPeerConnection, slot: TrackSlot, track: MediaStreamTrack | null) {
   const transceiver = pc.getTransceivers()[slot];
   if (!transceiver) return;
