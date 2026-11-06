@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "US",
+  "version": "1.0.0",
+  "description": "Watch together, apart.",
+  "icons": {
+    "16": "Asset/icon.png",
+    "48": "Asset/icon.png",
+    "128": "Asset/icon.png"
+  },
+  "action": {
+    "default_title": "US"
+  },
+  "side_panel": {
+    "default_path": "index.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "sidePanel",
+    "storage"
+  ]
+}

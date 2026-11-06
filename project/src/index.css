@@ -1,0 +1,24 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family:
+    'SF Mono', 'SFMono-Regular',
+    'Segoe UI Variable', 'Segoe UI',
+    'Roboto Flex', Roboto,
+    ui-monospace, 'Cascadia Mono', Menlo, Monaco, Consolas, monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-brand {
+  font-family: 'Playfair Display', 'Georgia', serif;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
