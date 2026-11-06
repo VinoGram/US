@@ -281,13 +281,20 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
     let destroyed = false;
 
     const trySlot = (slot: number) => {
+      if (destroyed) return;
       if (slot >= maxPeers) { setStatus('error'); return; }
       const id = slotId(roomCode, slot);
+
+      if (peerRef.current) {
+        try { peerRef.current.destroy(); } catch {}
+        peerRef.current = null;
+      }
+
       const peer = new Peer(id, PEER_CONFIG);
       peerRef.current = peer;
 
       peer.on('open', () => {
-        if (destroyed) return;
+        if (destroyed) { peer.destroy(); return; }
         const host = slot === 0;
         isHostRef.current = host;
         setIsHost(host);
@@ -304,11 +311,13 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
       });
 
       peer.on('error', (err) => {
-        console.warn('[peer] error', err);
-        if ((err as { type?: string }).type === 'unavailable-id') {
+        const type = (err as { type?: string }).type;
+        if (type === 'unavailable-id') {
           peer.destroy();
-          trySlot(slot + 1);
+          peerRef.current = null;
+          setTimeout(() => trySlot(slot + 1), 300);
         } else {
+          console.warn('[peer] error', err);
           setStatus('error');
         }
       });
@@ -324,10 +333,19 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
 
     trySlot(0);
 
-    return () => {
+    const releaseId = () => {
       destroyed = true;
+      try { peerRef.current?.destroy(); } catch {}
+      peerRef.current = null;
+    };
+    window.addEventListener('beforeunload', releaseId);
+    window.addEventListener('pagehide', releaseId);
+
+    return () => {
+      releaseId();
+      window.removeEventListener('beforeunload', releaseId);
+      window.removeEventListener('pagehide', releaseId);
       Object.values(peersRef.current).forEach(p => { p.dataConn?.close(); p.mediaConn?.close(); });
-      peerRef.current?.destroy();
       Object.values(localTracksRef.current).forEach(t => t?.stop());
       localTracksRef.current = {
         [TRACK_SLOT.screenVideo]: null,

@@ -63,7 +63,8 @@ export function createPlaceholderStream(): MediaStream {
   }
   const canvas = document.createElement('canvas');
   canvas.width = 2; canvas.height = 2;
-  canvas.getContext('2d')?.fillRect(0, 0, 2, 2);
+  const ctx = canvas.getContext('2d');
+  if (ctx) { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 2, 2); }
   const [video] = canvas.captureStream(1).getVideoTracks();
   const a1 = _placeholderDests[0].stream.getAudioTracks()[0];
   const a2 = _placeholderDests[1].stream.getAudioTracks()[0];

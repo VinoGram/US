@@ -14,13 +14,21 @@ export function StreamVideo({ stream, muted = false, style }: StreamElementProps
     if (!video) return;
     video.srcObject = stream;
     if (!stream) return;
-    const tryPlay = () => video.play().catch(err => console.warn('[watch] play blocked:', err));
+    let cancelled = false;
+    const tryPlay = () => {
+      if (cancelled) return;
+      video.play().catch(err => {
+        if (err.name === 'AbortError') return;
+        console.warn('[watch] play blocked:', err);
+      });
+    };
     tryPlay();
     const track = stream.getVideoTracks()[0];
     if (track) {
       track.addEventListener('unmute', tryPlay);
-      return () => track.removeEventListener('unmute', tryPlay);
+      return () => { cancelled = true; track.removeEventListener('unmute', tryPlay); };
     }
+    return () => { cancelled = true; };
   }, [stream]);
 
   return (
