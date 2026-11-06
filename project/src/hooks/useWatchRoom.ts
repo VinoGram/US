@@ -184,6 +184,7 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
 
     pc.addEventListener('iceconnectionstatechange', () => {
       if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        setStatus('connected');
         if (isHostRef.current) {
           Object.entries(localTracksRef.current).forEach(([slot, track]) => {
             if (track) setSlotTrack(pc, Number(slot) as TrackSlot, track);

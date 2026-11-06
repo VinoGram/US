@@ -18,11 +18,11 @@ export default function RoomScreen({ roomCode, maxPeers, onLeave }: RoomScreenPr
   const room = useWatchRoom(roomCode, maxPeers);
   const connected = room.status === 'connected';
 
-  let statusLabel = room.isHost ? 'Waiting for viewers' : 'Joining room';
-  if (room.status === 'connecting') statusLabel = 'Joining room';
-  else if (room.status === 'error') statusLabel = 'Disconnected';
+  let statusLabel: string;
+  if (room.status === 'error') statusLabel = 'Disconnected';
+  else if (room.status === 'connecting') statusLabel = room.isHost ? 'Starting room' : 'Joining room';
   else if (room.partnerCount > 0) statusLabel = room.isHost ? `${room.partnerCount} watching` : 'Watching live';
-  else if (connected && !room.isHost) statusLabel = 'Connected';
+  else statusLabel = room.isHost ? 'Waiting for viewers' : 'Connected';
 
   const dotColor =
     room.status === 'error' ? 'red.400' :
