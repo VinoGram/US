@@ -177,7 +177,7 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
     });
     let stopAdapt: (() => void) | null = null;
     const pc = mc.peerConnection;
-    if (!pc) return;
+    if (!pc || typeof pc.getTransceivers !== 'function') return;
     // Ensure all 3 slots exist with correct directions
     const existing = pc.getTransceivers();
     SLOT_KINDS.forEach((kind, i) => {
@@ -271,12 +271,18 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
 
       peer.on('connection', (conn) => setupDataConn(conn));
       peer.on('call', (mc) => {
-        // Answer first so PeerJS creates mc.peerConnection, then set up transceivers
         const answerStream = isHostRef.current
           ? localStreamRef.current
           : (() => { const s = new MediaStream(); const m = localTracksRef.current[TRACK_SLOT.mic]; if (m) s.addTrack(m); return s; })();
         mc.answer(answerStream);
-        setupMediaConn(mc);
+        const waitForPc = () => {
+          if (mc.peerConnection && typeof mc.peerConnection.getTransceivers === 'function') {
+            setupMediaConn(mc);
+          } else {
+            setTimeout(waitForPc, 10);
+          }
+        };
+        waitForPc();
       });
     };
 
