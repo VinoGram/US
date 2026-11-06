@@ -34,12 +34,11 @@ export function getScreenConstraints(): DisplayMediaStreamOptions {
   if (isIOS()) {
     return {
       video: { width: { max: 1280 }, height: { max: 720 }, frameRate: { max: 15 } },
-      // iOS ignores audio in getDisplayMedia — omit it entirely
     };
   }
   return {
     video: { width: { max: 1920 }, height: { max: 1080 }, frameRate: { max: 30 } },
-    audio: true,
+    audio: { echoCancellation: false, noiseSuppression: false },
   };
 }
 

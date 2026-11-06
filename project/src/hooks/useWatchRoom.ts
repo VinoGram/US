@@ -108,7 +108,21 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
       broadcastMeta({ sharing: true });
     } catch (e) {
       if (e instanceof DOMException && e.name === 'NotAllowedError') return;
-      setMediaError('Could not start screen sharing. Please try again.');
+      // Some browsers reject audio:true in getDisplayMedia — retry without audio
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const [video] = stream.getVideoTracks();
+        if (!video) { stream.getTracks().forEach(t => t.stop()); return; }
+        stopShare();
+        video.addEventListener('ended', stopShare);
+        setLocalTrack(TRACK_SLOT.screenVideo, video);
+        setLocalTrack(TRACK_SLOT.screenAudio, null);
+        setLocalScreen(new MediaStream([video]));
+        broadcastMeta({ sharing: true });
+      } catch (e2) {
+        if (e2 instanceof DOMException && e2.name === 'NotAllowedError') return;
+        setMediaError('Could not start screen sharing. Please try again.');
+      }
     }
   };
 
