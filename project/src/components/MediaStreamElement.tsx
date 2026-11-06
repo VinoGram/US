@@ -13,7 +13,7 @@ export function StreamVideo({ stream, muted = false, style }: StreamElementProps
     const video = ref.current;
     if (!video) return;
     video.srcObject = stream;
-    if (stream) void video.play().catch(() => {});
+    if (stream) video.play().catch((err) => console.warn('[watch] play blocked:', err));
   }, [stream]);
 
   return (
@@ -24,8 +24,6 @@ export function StreamVideo({ stream, muted = false, style }: StreamElementProps
       muted={muted}
       style={style}
       disablePictureInPicture
-      // low latency hint — browser skips buffering and renders first frame ASAP
-      {...({ latencyHint: 'interactive' } as object)}
     />
   );
 }

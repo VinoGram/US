@@ -114,6 +114,7 @@ export default function RoomScreen({ roomCode, maxPeers, onLeave }: RoomScreenPr
           partnerOnline={room.partnerOnline}
           partnerSharing={room.partnerSharing}
           partnerScreen={room.partnerScreen}
+          partnerScreenAudio={room.partnerScreenAudio}
           localScreen={room.localScreen}
         />
 

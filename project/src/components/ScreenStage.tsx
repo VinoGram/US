@@ -1,8 +1,8 @@
-import { useRef, type ReactNode } from 'react';
-import { Box, Flex, Heading, Icon, IconButton, Spinner, Text } from '@chakra-ui/react';
-import { Maximize, Monitor } from 'lucide-react';
+import { useRef, useState, type ReactNode } from 'react';
+import { Box, Button, Flex, Heading, Icon, IconButton, Spinner, Text } from '@chakra-ui/react';
+import { Maximize, Monitor, Volume2, VolumeX } from 'lucide-react';
 import InviteLink from '@/components/InviteLink';
-import { StreamVideo } from '@/components/MediaStreamElement';
+import { StreamVideo, StreamAudio } from '@/components/MediaStreamElement';
 
 interface ScreenStageProps {
   roomCode: string;
@@ -10,6 +10,7 @@ interface ScreenStageProps {
   partnerOnline: boolean;
   partnerSharing: boolean;
   partnerScreen: MediaStream | null;
+  partnerScreenAudio: MediaStream | null;
   localScreen: MediaStream | null;
 }
 
@@ -29,9 +30,11 @@ export default function ScreenStage({
   partnerOnline,
   partnerSharing,
   partnerScreen,
+  partnerScreenAudio,
   localScreen,
 }: ScreenStageProps) {
   const stageRef = useRef<HTMLDivElement>(null);
+  const [audioUnmuted, setAudioUnmuted] = useState(false);
 
   const toggleFullscreen = () => {
     if (document.fullscreenElement) {
@@ -45,7 +48,14 @@ export default function ScreenStage({
   if (partnerSharing && partnerScreen) {
     content = (
       <>
-        <StreamVideo stream={partnerScreen} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+        {/* Video-only stream — always muted to satisfy autoplay policy */}
+        <StreamVideo
+          stream={partnerScreen}
+          muted
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain' }}
+        />
+        {/* Screen audio played separately so the video element can stay muted */}
+        {audioUnmuted && <StreamAudio stream={partnerScreenAudio} />}
         <Box
           position="absolute"
           top={4}
@@ -61,26 +71,38 @@ export default function ScreenStage({
         >
           Your partner's screen
         </Box>
-        <IconButton
-          aria-label="Toggle fullscreen"
-          icon={<Icon as={Maximize} boxSize={4} />}
-          position="absolute"
-          bottom={4}
-          right={4}
-          borderRadius="full"
-          bg="blackAlpha.700"
-          color="whiteAlpha.900"
-          backdropFilter="blur(8px)"
-          _hover={{ bg: 'blackAlpha.800' }}
-          _active={{ transform: 'scale(0.95)' }}
-          onClick={toggleFullscreen}
-        />
+        <Flex position="absolute" bottom={4} right={4} gap={2}>
+          <Button
+            size="sm"
+            borderRadius="full"
+            bg="blackAlpha.700"
+            color="whiteAlpha.900"
+            backdropFilter="blur(8px)"
+            leftIcon={<Icon as={audioUnmuted ? Volume2 : VolumeX} boxSize={4} />}
+            _hover={{ bg: 'blackAlpha.800' }}
+            _active={{ transform: 'scale(0.95)' }}
+            onClick={() => setAudioUnmuted(v => !v)}
+          >
+            {audioUnmuted ? 'Mute' : 'Unmute'}
+          </Button>
+          <IconButton
+            aria-label="Toggle fullscreen"
+            icon={<Icon as={Maximize} boxSize={4} />}
+            borderRadius="full"
+            bg="blackAlpha.700"
+            color="whiteAlpha.900"
+            backdropFilter="blur(8px)"
+            _hover={{ bg: 'blackAlpha.800' }}
+            _active={{ transform: 'scale(0.95)' }}
+            onClick={toggleFullscreen}
+          />
+        </Flex>
       </>
     );
   } else if (localScreen) {
     content = (
       <>
-        <StreamVideo stream={localScreen} muted style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+        <StreamVideo stream={localScreen} muted style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
         <Flex
           position="absolute"
           top={4}

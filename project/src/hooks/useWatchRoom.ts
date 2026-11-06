@@ -296,10 +296,15 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
   const screenVideoTrack = sharingPeer?.tracks[TRACK_SLOT.screenVideo] ?? null;
   const screenAudioTrack = sharingPeer?.tracks[TRACK_SLOT.screenAudio] ?? null;
 
-  const partnerScreen = useMemo(() => {
-    if (!screenVideoTrack) return null;
-    return new MediaStream(screenAudioTrack ? [screenVideoTrack, screenAudioTrack] : [screenVideoTrack]);
-  }, [screenVideoTrack, screenAudioTrack]);
+  const partnerScreen = useMemo(
+    () => screenVideoTrack ? new MediaStream([screenVideoTrack]) : null,
+    [screenVideoTrack]
+  );
+
+  const partnerScreenAudio = useMemo(
+    () => screenAudioTrack ? new MediaStream([screenAudioTrack]) : null,
+    [screenAudioTrack]
+  );
 
   const micStreams = useMemo(() =>
     peerList
@@ -315,6 +320,7 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
     partnerCount: peerList.length,
     partnerSharing: peerList.some(p => p.meta.sharing),
     partnerScreen,
+    partnerScreenAudio,
     micStreams,
     localScreen,
     isSharing: selfMeta.sharing,
