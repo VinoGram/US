@@ -175,6 +175,7 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
     });
     let stopAdapt: (() => void) | null = null;
     const pc = mc.peerConnection;
+    if (!pc) return;
     const existing = pc.getTransceivers();
     SLOT_KINDS.forEach((kind, i) => {
       if (existing[i]) {
@@ -265,12 +266,12 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
 
       peer.on('connection', (conn) => setupDataConn(conn));
       peer.on('call', (mc) => {
-        setupMediaConn(mc);
-        // Host answers with its real stream; guests answer with their mic stream
+        // Answer first so PeerJS creates mc.peerConnection, then set up transceivers
         const answerStream = isHostRef.current
           ? localStreamRef.current
           : (() => { const s = new MediaStream(); const m = localTracksRef.current[TRACK_SLOT.mic]; if (m) s.addTrack(m); return s; })();
         mc.answer(answerStream);
+        setupMediaConn(mc);
       });
     };
 
