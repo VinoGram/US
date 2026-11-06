@@ -40,6 +40,9 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
     [TRACK_SLOT.screenAudio]: null,
     [TRACK_SLOT.mic]: null,
   });
+  const pendingTracksRef = useRef<
+    Record<string, Partial<Record<TrackSlot, MediaStreamTrack | null>>>
+  >({});
   const peersRef = useRef<Record<string, PeerState>>({});
 
   const updatePeer = (peerId: string, patch: Partial<PeerState>) => {
@@ -77,12 +80,20 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
     });
   };
 
-  // Push a track to all connected peers via the stored pc reference
+  // Push a track to all connected peers; queue it if pc isn't resolved yet
   const setLocalTrack = (slot: TrackSlot, track: MediaStreamTrack | null) => {
     localTracksRef.current[slot] = track;
     if (!isHostRef.current && slot !== TRACK_SLOT.mic) return;
-    Object.values(peersRef.current).forEach(p => {
-      if (p.pc) setSlotTrack(p.pc, slot, track);
+    Object.entries(peersRef.current).forEach(([peerId, p]) => {
+      if (p.pc) {
+        console.log('[host] pushing slot', slot, track ? 'live' : 'null', 'to', peerId);
+        setSlotTrack(p.pc, slot, track);
+      } else {
+        console.warn('[host] pc not ready for', peerId, '— queueing slot', slot);
+        const q = pendingTracksRef.current[peerId] ?? {};
+        q[slot] = track;
+        pendingTracksRef.current[peerId] = q;
+      }
     });
   };
 
@@ -202,10 +213,30 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
       // Store the resolved pc so setLocalTrack can use it directly
       updatePeer(peerId, { pc });
 
+      // Push any tracks we already have — don't wait for ICE
+      if (isHostRef.current) {
+        Object.entries(localTracksRef.current).forEach(([slot, track]) => {
+          if (track) setSlotTrack(pc, Number(slot) as TrackSlot, track);
+        });
+      } else {
+        const mic = localTracksRef.current[TRACK_SLOT.mic];
+        if (mic) setSlotTrack(pc, TRACK_SLOT.mic, mic);
+      }
+
+      // Drain anything queued while pc was resolving
+      const queued = pendingTracksRef.current[peerId];
+      if (queued) {
+        Object.entries(queued).forEach(([slot, track]) =>
+          setSlotTrack(pc, Number(slot) as TrackSlot, track ?? null)
+        );
+        delete pendingTracksRef.current[peerId];
+      }
+
       let stopAdapt: (() => void) | null = null;
 
-      pc.addEventListener('iceconnectionstatechange', () => {
-        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+      const onIce = () => {
+        const state = pc.iceConnectionState;
+        if (state === 'connected' || state === 'completed') {
           setStatus('connected');
           if (isHostRef.current) {
             console.log('[host] ICE connected, pushing tracks:', localTracksRef.current);
@@ -213,16 +244,20 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
             Object.entries(localTracksRef.current).forEach(([slot, track]) => {
               if (track) setSlotTrack(pc, Number(slot) as TrackSlot, track);
             });
-            stopAdapt = adaptBitrate(pc);
+            if (!stopAdapt) stopAdapt = adaptBitrate(pc);
           } else {
-            const micTrack = localTracksRef.current[TRACK_SLOT.mic];
-            if (micTrack) setSlotTrack(pc, TRACK_SLOT.mic, micTrack);
+            const mic = localTracksRef.current[TRACK_SLOT.mic];
+            if (mic) setSlotTrack(pc, TRACK_SLOT.mic, mic);
           }
         }
-        if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
+        if (state === 'disconnected' || state === 'failed' || state === 'closed') {
           stopAdapt?.();
+          stopAdapt = null;
         }
-      });
+      };
+
+      pc.addEventListener('iceconnectionstatechange', onIce);
+      onIce(); // run once in case ICE already connected before we registered
 
       pc.addEventListener('track', (event) => {
         const slot = slotForReceiver(pc, event.receiver);
@@ -300,6 +335,7 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
         [TRACK_SLOT.mic]: null,
       };
       peersRef.current = {};
+      pendingTracksRef.current = {};
       setPeers({});
       setLocalScreen(null);
       setSelfMeta(DEFAULT_META);
