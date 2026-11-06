@@ -159,32 +159,35 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
       meta: peersRef.current[peerId]?.meta ?? DEFAULT_META,
       tracks: peersRef.current[peerId]?.tracks ?? {},
     });
+    let stopAdapt: (() => void) | null = null;
     const pc = mc.peerConnection;
     const existing = pc.getTransceivers();
     SLOT_KINDS.forEach((kind, i) => {
-      if (!existing[i]) {
-        // Video slots: host sends, guests receive. Mic slot: everyone sends.
+      if (existing[i]) {
+        // Fix direction on already-negotiated transceivers
+        const dir = (i === TRACK_SLOT.mic) ? 'sendrecv' : isHostRef.current ? 'sendrecv' : 'recvonly';
+        existing[i].direction = dir;
+      } else {
         const direction = (i === TRACK_SLOT.mic)
           ? 'sendrecv'
           : isHostRef.current ? 'sendrecv' : 'recvonly';
         pc.addTransceiver(kind, { direction });
       }
     });
-    // Push current tracks
-    if (isHostRef.current) {
-      Object.entries(localTracksRef.current).forEach(([slot, track]) => {
-        if (track) setSlotTrack(pc, Number(slot) as TrackSlot, track);
-      });
-    } else {
-      // Guest only pushes mic if already on
-      const micTrack = localTracksRef.current[TRACK_SLOT.mic];
-      if (micTrack) setSlotTrack(pc, TRACK_SLOT.mic, micTrack);
-    }
-    let stopAdapt: (() => void) | null = null;
+    // Push current tracks once ICE connects (host may not be sharing yet at setup time)
     pc.addEventListener('iceconnectionstatechange', () => {
-      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-        if (isHostRef.current) stopAdapt = adaptBitrate(pc);
+      if (pc.iceConnectionState !== 'connected' && pc.iceConnectionState !== 'completed') return;
+      if (isHostRef.current) {
+        Object.entries(localTracksRef.current).forEach(([slot, track]) => {
+          if (track) setSlotTrack(pc, Number(slot) as TrackSlot, track);
+        });
+        stopAdapt = adaptBitrate(pc);
+      } else {
+        const micTrack = localTracksRef.current[TRACK_SLOT.mic];
+        if (micTrack) setSlotTrack(pc, TRACK_SLOT.mic, micTrack);
       }
+    });
+    pc.addEventListener('iceconnectionstatechange', () => {
       if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
         stopAdapt?.();
       }
@@ -222,11 +225,15 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
           // Guest: connect to host only
           const conn = peer.connect(slotId(roomCode, 0), { reliable: true });
           setupDataConn(conn);
-          // Call with a stream that has a silent audio track so PeerJS
-          // negotiates all transceivers (including host's video slots)
+          // Build a dummy stream with silent audio + blank video so the offer SDP
+          // includes all 3 transceivers (screenVideo, screenAudio, mic)
           const ctx = new AudioContext();
           const dest = ctx.createMediaStreamDestination();
-          const mc = peer.call(slotId(roomCode, 0), dest.stream);
+          const canvas = document.createElement('canvas');
+          canvas.width = 2; canvas.height = 2;
+          const blankVideo = canvas.captureStream(0).getVideoTracks()[0];
+          const dummyStream = new MediaStream([blankVideo, dest.stream.getAudioTracks()[0]]);
+          const mc = peer.call(slotId(roomCode, 0), dummyStream);
           if (mc) setupMediaConn(mc);
         } else {
           setStatus('connected');
@@ -244,12 +251,12 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
 
       peer.on('connection', (conn) => setupDataConn(conn));
       peer.on('call', (mc) => {
+        setupMediaConn(mc);
         // Host answers with its real stream; guests answer with their mic stream
         const answerStream = isHostRef.current
           ? localStreamRef.current
           : (() => { const s = new MediaStream(); const m = localTracksRef.current[TRACK_SLOT.mic]; if (m) s.addTrack(m); return s; })();
         mc.answer(answerStream);
-        setupMediaConn(mc);
       });
     };
 
