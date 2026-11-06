@@ -33,13 +33,21 @@ export function isIOS(): boolean {
 export function getScreenConstraints(): DisplayMediaStreamOptions {
   if (isIOS()) {
     return {
-      video: { width: { max: 1280 }, height: { max: 720 }, frameRate: { max: 15 } },
+      video: { width: { max: 1280 }, height: { max: 720 }, frameRate: { max: 10 } },
     };
   }
   return {
-    video: { width: { max: 1920 }, height: { max: 1080 }, frameRate: { max: 30 } },
+    video: { width: { max: 1280 }, height: { max: 720 }, frameRate: { max: 15 } },
     audio: { echoCancellation: false, noiseSuppression: false },
   };
+}
+
+const PLACEHOLDER_TAG = '__placeholder__';
+function tagPlaceholder(track: MediaStreamTrack) {
+  (track as unknown as Record<string, unknown>)[PLACEHOLDER_TAG] = true;
+}
+export function isPlaceholderTrack(track: MediaStreamTrack): boolean {
+  return !!(track as unknown as Record<string, unknown>)[PLACEHOLDER_TAG];
 }
 
 export function createPlaceholderStream(): MediaStream {
@@ -50,6 +58,7 @@ export function createPlaceholderStream(): MediaStream {
   const ctx = new AudioContext();
   const [a1] = ctx.createMediaStreamDestination().stream.getAudioTracks();
   const [a2] = ctx.createMediaStreamDestination().stream.getAudioTracks();
+  [video, a1, a2].forEach(t => t && tagPlaceholder(t));
   return new MediaStream([video, a1, a2].filter(Boolean));
 }
 
@@ -83,7 +92,7 @@ export function setSlotTrack(pc: RTCPeerConnection, slot: TrackSlot, track: Medi
   if (track?.kind === 'video') {
     const params = transceiver.sender.getParameters();
     if (params.encodings?.length) {
-      params.encodings[0].maxBitrate = isIOS() ? 300_000 : 500_000;
+      params.encodings[0].maxBitrate = isIOS() ? 150_000 : 200_000;
       params.encodings[0].scaleResolutionDownBy = isIOS() ? 2 : 1;
       transceiver.sender.setParameters(params).catch(() => {});
     }
@@ -92,8 +101,8 @@ export function setSlotTrack(pc: RTCPeerConnection, slot: TrackSlot, track: Medi
 
 // Bitrate ladder: steps we move through as network improves/degrades
 const BITRATE_STEPS = isIOS()
-  ? [300_000, 500_000, 800_000]          // mobile: 300k → 500k → 800k
-  : [500_000, 1_000_000, 2_000_000, 4_000_000]; // desktop: 500k → 1M → 2M → 4M
+  ? [150_000, 250_000, 400_000]          // mobile: 150k → 250k → 400k
+  : [200_000, 400_000, 700_000, 1_000_000]; // desktop: 200k → 400k → 700k → 1M
 
 const SCALE_STEPS = isIOS() ? [2, 1.5, 1] : [1, 1, 1, 1];
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import Peer, { type DataConnection, type MediaConnection } from 'peerjs';
-import { TRACK_SLOT, type TrackSlot, PEER_CONFIG, setSlotTrack, slotForReceiver, getScreenConstraints, isIOS, adaptBitrate, createPlaceholderStream } from '@/lib/webrtc';
+import { TRACK_SLOT, type TrackSlot, PEER_CONFIG, setSlotTrack, slotForReceiver, getScreenConstraints, isIOS, adaptBitrate, createPlaceholderStream, isPlaceholderTrack } from '@/lib/webrtc';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'error';
 
@@ -8,13 +8,6 @@ interface PresenceMeta { sharing: boolean; micOn: boolean; }
 const DEFAULT_META: PresenceMeta = { sharing: false, micOn: false };
 
 function slotId(roomCode: string, slot: number) { return `${roomCode}-${slot}`; }
-
-// A placeholder track is the 2x2 silent canvas/audio we create ourselves.
-// We detect it by label — real getUserMedia/getDisplayMedia tracks have a device label.
-// Placeholder AudioContext tracks have an empty label.
-function isPlaceholderTrack(track: MediaStreamTrack): boolean {
-  return track.label === '' || track.label.startsWith('MediaStreamAudioDestinationNode');
-}
 
 interface PeerState {
   dataConn: DataConnection | null;
@@ -165,8 +158,14 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
       if (!track) return;
       setLocalTrack(TRACK_SLOT.mic, track);
       broadcastMeta({ micOn: true });
-    } catch {
-      setMediaError("Couldn't turn on your microphone.");
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'NotAllowedError') {
+        setMediaError('Microphone permission was denied. Allow access in your browser settings.');
+      } else if (e instanceof DOMException && e.name === 'NotFoundError') {
+        setMediaError('No microphone found on this device.');
+      } else {
+        setMediaError(`Couldn't turn on your microphone: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
   };
 
