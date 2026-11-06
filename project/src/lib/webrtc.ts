@@ -50,14 +50,23 @@ export function isPlaceholderTrack(track: MediaStreamTrack): boolean {
   return !!(track as unknown as Record<string, unknown>)[PLACEHOLDER_TAG];
 }
 
+let _placeholderCtx: AudioContext | null = null;
+let _placeholderDests: MediaStreamAudioDestinationNode[] = [];
+
 export function createPlaceholderStream(): MediaStream {
+  if (!_placeholderCtx) _placeholderCtx = new AudioContext();
+  if (_placeholderDests.length === 0) {
+    _placeholderDests = [
+      _placeholderCtx.createMediaStreamDestination(),
+      _placeholderCtx.createMediaStreamDestination(),
+    ];
+  }
   const canvas = document.createElement('canvas');
   canvas.width = 2; canvas.height = 2;
   canvas.getContext('2d')?.fillRect(0, 0, 2, 2);
   const [video] = canvas.captureStream(1).getVideoTracks();
-  const ctx = new AudioContext();
-  const [a1] = ctx.createMediaStreamDestination().stream.getAudioTracks();
-  const [a2] = ctx.createMediaStreamDestination().stream.getAudioTracks();
+  const a1 = _placeholderDests[0].stream.getAudioTracks()[0];
+  const a2 = _placeholderDests[1].stream.getAudioTracks()[0];
   [video, a1, a2].forEach(t => t && tagPlaceholder(t));
   return new MediaStream([video, a1, a2].filter(Boolean));
 }

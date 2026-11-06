@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import Peer, { type DataConnection, type MediaConnection } from 'peerjs';
-import { TRACK_SLOT, type TrackSlot, PEER_CONFIG, setSlotTrack, slotForReceiver, getScreenConstraints, isIOS, adaptBitrate, createPlaceholderStream, isPlaceholderTrack } from '@/lib/webrtc';
+import { TRACK_SLOT, type TrackSlot, PEER_CONFIG, setSlotTrack, slotForReceiver, getScreenConstraints, isIOS, adaptBitrate, createPlaceholderStream } from '@/lib/webrtc';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'error';
 
@@ -151,12 +151,13 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          ...(isIOS() ? { sampleRate: 16000 } : {}),
+          ...(isIOS() ? { sampleRate: { ideal: 16000 } } : {}),
         },
       });
       const [track] = stream.getAudioTracks();
       if (!track) return;
       setLocalTrack(TRACK_SLOT.mic, track);
+      console.log('[mic] track acquired, pc present?', Object.values(peersRef.current).map(p => !!p.pc));
       broadcastMeta({ micOn: true });
     } catch (e) {
       if (e instanceof DOMException && e.name === 'NotAllowedError') {
@@ -347,27 +348,25 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
 
   const peerList = Object.values(peers);
 
-  // Gate on meta.sharing — don't use track presence which includes placeholders
+  // Use meta as the source of truth for mic and screen audio.
+  // Remote tracks are always labelled 'remote audio' by Chrome — isPlaceholderTrack
+  // cannot distinguish them from real tracks. meta.micOn / meta.sharing is reliable.
   const sharingPeer = peerList.find(p => p.meta.sharing);
   const screenVideoTrack = sharingPeer?.tracks[TRACK_SLOT.screenVideo] ?? null;
-  const screenAudioTrack = sharingPeer?.tracks[TRACK_SLOT.screenAudio] ?? null;
 
   const partnerScreen = useMemo(
     () => screenVideoTrack ? new MediaStream([screenVideoTrack]) : null,
     [screenVideoTrack]
   );
 
-  const partnerScreenAudio = useMemo(
-    () => screenAudioTrack && !isPlaceholderTrack(screenAudioTrack) ? new MediaStream([screenAudioTrack]) : null,
-    [screenAudioTrack]
-  );
+  const partnerScreenAudio = useMemo(() => {
+    const t = sharingPeer?.tracks[TRACK_SLOT.screenAudio];
+    return t ? new MediaStream([t]) : null;
+  }, [peers]);
 
   const micStreams = useMemo(() =>
     peerList
-      .filter(p => {
-        const t = p.tracks[TRACK_SLOT.mic];
-        return t && !isPlaceholderTrack(t);
-      })
+      .filter(p => p.meta.micOn && p.tracks[TRACK_SLOT.mic])
       .map(p => new MediaStream([p.tracks[TRACK_SLOT.mic]!])),
     [peers]
   );
