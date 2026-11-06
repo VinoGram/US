@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import Peer, { type DataConnection, type MediaConnection } from 'peerjs';
-import { TRACK_SLOT, type TrackSlot, PEER_CONFIG, setSlotTrack, getScreenConstraints, isIOS, adaptBitrate, createPlaceholderStream } from '@/lib/webrtc';
+import { TRACK_SLOT, type TrackSlot, PEER_CONFIG, setSlotTrack, slotForReceiver, getScreenConstraints, isIOS, adaptBitrate, createPlaceholderStream } from '@/lib/webrtc';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'error';
 
@@ -212,12 +212,11 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
       });
 
       pc.addEventListener('track', (event) => {
-        const transceivers = pc.getTransceivers();
-        const slot = transceivers.findIndex(t => t.receiver === event.receiver);
+        const slot = slotForReceiver(pc, event.receiver);
         if (slot === -1) return;
-        console.log(`[track] slot=${slot} kind=${event.track.kind} readyState=${event.track.readyState} muted=${event.track.muted}`);
+        console.log(`[track] slot=${slot} kind=${event.track.kind} label=${event.track.label}`);
         updatePeer(peerId, {
-          tracks: { ...peersRef.current[peerId]?.tracks, [slot as TrackSlot]: event.track },
+          tracks: { ...peersRef.current[peerId]?.tracks, [slot]: event.track },
         });
       });
 
@@ -300,12 +299,8 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
 
   const peerList = Object.values(peers);
 
-  // A real screen track is live and unmuted — placeholder tracks are muted/ended
-  const sharingPeer = peerList.find(p => {
-    const t = p.tracks[TRACK_SLOT.screenVideo];
-    return t && !isPlaceholderTrack(t);
-  });
-
+  // Gate on meta.sharing — don't use track presence which includes placeholders
+  const sharingPeer = peerList.find(p => p.meta.sharing);
   const screenVideoTrack = sharingPeer?.tracks[TRACK_SLOT.screenVideo] ?? null;
   const screenAudioTrack = sharingPeer?.tracks[TRACK_SLOT.screenAudio] ?? null;
 
@@ -334,7 +329,7 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
     isHost,
     partnerOnline: peerList.length > 0,
     partnerCount: peerList.length,
-    partnerSharing: peerList.some(p => p.meta.sharing) || !!screenVideoTrack,
+    partnerSharing: peerList.some(p => p.meta.sharing),
     partnerScreen,
     partnerScreenAudio,
     micStreams,

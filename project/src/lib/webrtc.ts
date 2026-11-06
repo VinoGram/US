@@ -52,14 +52,36 @@ export function createPlaceholderStream(): MediaStream {
   return new MediaStream([video, a1, a2].filter(Boolean));
 }
 
+function transceiversOfKind(pc: RTCPeerConnection, kind: string) {
+  return pc.getTransceivers().filter(t => t.receiver.track.kind === kind);
+}
+
+// slot 0 -> 1st video, slot 1 -> 1st audio, slot 2 -> 2nd audio
+export function getSlotTransceiver(pc: RTCPeerConnection, slot: TrackSlot) {
+  const kind = SLOT_KINDS[slot];
+  const nth = SLOT_KINDS.slice(0, slot).filter(k => k === kind).length;
+  return transceiversOfKind(pc, kind)[nth];
+}
+
+export function slotForReceiver(pc: RTCPeerConnection, receiver: RTCRtpReceiver): TrackSlot | -1 {
+  const kind = receiver.track.kind;
+  const nth = transceiversOfKind(pc, kind).findIndex(t => t.receiver === receiver);
+  if (nth === -1) return -1;
+  let seen = -1;
+  for (let s = 0; s < SLOT_KINDS.length; s++) {
+    if (SLOT_KINDS[s] === kind && ++seen === nth) return s as TrackSlot;
+  }
+  return -1;
+}
+
 export function setSlotTrack(pc: RTCPeerConnection, slot: TrackSlot, track: MediaStreamTrack | null) {
-  const transceiver = pc.getTransceivers()[slot];
-  if (!transceiver) return;
-  transceiver.sender.replaceTrack(track).catch(() => {});
+  const transceiver = getSlotTransceiver(pc, slot);
+  if (!transceiver) { console.warn('[watch] no transceiver for slot', slot); return; }
+  transceiver.sender.replaceTrack(track).catch((err) =>
+    console.warn('[watch] replaceTrack failed, slot', slot, err));
   if (track?.kind === 'video') {
     const params = transceiver.sender.getParameters();
     if (params.encodings?.length) {
-      // Always start low — adaptBitrate will ramp up when network is stable
       params.encodings[0].maxBitrate = isIOS() ? 300_000 : 500_000;
       params.encodings[0].scaleResolutionDownBy = isIOS() ? 2 : 1;
       transceiver.sender.setParameters(params).catch(() => {});
