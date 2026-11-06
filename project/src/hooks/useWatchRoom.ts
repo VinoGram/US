@@ -167,17 +167,10 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
     conn.on('error', () => removePeer(peerId));
   };
 
-  const setupMediaConn = (mc: MediaConnection) => {
+  const wireMediaConn = (mc: MediaConnection, pc: RTCPeerConnection) => {
     const peerId = mc.peer;
-    updatePeer(peerId, {
-      mediaConn: mc,
-      dataConn: peersRef.current[peerId]?.dataConn ?? null,
-      meta: peersRef.current[peerId]?.meta ?? DEFAULT_META,
-      tracks: peersRef.current[peerId]?.tracks ?? {},
-    });
     let stopAdapt: (() => void) | null = null;
-    const pc = mc.peerConnection;
-    if (!pc || typeof pc.getTransceivers !== 'function') return;
+
     // Ensure all 3 slots exist with correct directions
     const existing = pc.getTransceivers();
     SLOT_KINDS.forEach((kind, i) => {
@@ -188,24 +181,24 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
         try { pc.addTransceiver(kind, { direction: dir }); } catch {}
       }
     });
-    // Push current tracks once ICE connects (host may not be sharing yet at setup time)
+
     pc.addEventListener('iceconnectionstatechange', () => {
-      if (pc.iceConnectionState !== 'connected' && pc.iceConnectionState !== 'completed') return;
-      if (isHostRef.current) {
-        Object.entries(localTracksRef.current).forEach(([slot, track]) => {
-          if (track) setSlotTrack(pc, Number(slot) as TrackSlot, track);
-        });
-        stopAdapt = adaptBitrate(pc);
-      } else {
-        const micTrack = localTracksRef.current[TRACK_SLOT.mic];
-        if (micTrack) setSlotTrack(pc, TRACK_SLOT.mic, micTrack);
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        if (isHostRef.current) {
+          Object.entries(localTracksRef.current).forEach(([slot, track]) => {
+            if (track) setSlotTrack(pc, Number(slot) as TrackSlot, track);
+          });
+          stopAdapt = adaptBitrate(pc);
+        } else {
+          const micTrack = localTracksRef.current[TRACK_SLOT.mic];
+          if (micTrack) setSlotTrack(pc, TRACK_SLOT.mic, micTrack);
+        }
       }
-    });
-    pc.addEventListener('iceconnectionstatechange', () => {
       if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
         stopAdapt?.();
       }
     });
+
     pc.addEventListener('track', (event) => {
       const transceivers = pc.getTransceivers();
       const slot = transceivers.findIndex(t => t.receiver === event.receiver);
@@ -214,10 +207,34 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
         tracks: { ...peersRef.current[peerId]?.tracks, [slot as TrackSlot]: event.track },
       });
     });
+
     mc.on('close', () => {
       stopAdapt?.();
       updatePeer(peerId, { tracks: {} });
     });
+  };
+
+  const setupMediaConn = (mc: MediaConnection) => {
+    const peerId = mc.peer;
+    updatePeer(peerId, {
+      mediaConn: mc,
+      dataConn: peersRef.current[peerId]?.dataConn ?? null,
+      meta: peersRef.current[peerId]?.meta ?? DEFAULT_META,
+      tracks: peersRef.current[peerId]?.tracks ?? {},
+    });
+    // Wait until PeerJS has fully constructed the RTCPeerConnection and completed
+    // the initial offer/answer exchange (signalingState leaves 'closed'/'stable' ambiguity).
+    // Polling mc.peerConnection is unreliable — instead wait for the PC's own
+    // signalingstatechange which fires once the SDP exchange begins.
+    const waitForPc = (attempts = 0) => {
+      const pc = (mc as unknown as { _pc?: RTCPeerConnection })._pc ?? mc.peerConnection;
+      if (pc && typeof pc.getTransceivers === 'function') {
+        wireMediaConn(mc, pc);
+        return;
+      }
+      if (attempts < 100) setTimeout(() => waitForPc(attempts + 1), 20);
+    };
+    waitForPc();
   };
 
   useEffect(() => {
@@ -244,17 +261,7 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
           const ctx = new AudioContext();
           const dest = ctx.createMediaStreamDestination();
           const mc = peer.call(slotId(roomCode, 0), dest.stream);
-          if (mc) {
-            // Wait for PeerJS to create the peerConnection, then add video transceivers
-            const waitForPc = () => {
-              if (mc.peerConnection) {
-                setupMediaConn(mc);
-              } else {
-                setTimeout(waitForPc, 10);
-              }
-            };
-            waitForPc();
-          }
+          if (mc) setupMediaConn(mc);
         } else {
           setStatus('connected');
         }
@@ -275,14 +282,7 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
           ? localStreamRef.current
           : (() => { const s = new MediaStream(); const m = localTracksRef.current[TRACK_SLOT.mic]; if (m) s.addTrack(m); return s; })();
         mc.answer(answerStream);
-        const waitForPc = () => {
-          if (mc.peerConnection && typeof mc.peerConnection.getTransceivers === 'function') {
-            setupMediaConn(mc);
-          } else {
-            setTimeout(waitForPc, 10);
-          }
-        };
-        waitForPc();
+        setupMediaConn(mc);
       });
     };
 
