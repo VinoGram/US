@@ -189,10 +189,13 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
         stopAdapt?.();
       }
     });
-    mc.on('stream', (remoteStream) => {
-      const next: Partial<Record<TrackSlot, MediaStreamTrack>> = {};
-      remoteStream.getTracks().forEach((track, i) => { next[i as TrackSlot] = track; });
-      updatePeer(peerId, { tracks: next });
+    pc.addEventListener('track', (event) => {
+      const transceivers = pc.getTransceivers();
+      const slot = transceivers.findIndex(t => t.receiver === event.receiver);
+      if (slot === -1) return;
+      updatePeer(peerId, {
+        tracks: { ...peersRef.current[peerId]?.tracks, [slot as TrackSlot]: event.track },
+      });
     });
     mc.on('close', () => {
       stopAdapt?.();
