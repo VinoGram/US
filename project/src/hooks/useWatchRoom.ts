@@ -108,7 +108,8 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
       broadcastMeta({ sharing: true });
     } catch (e) {
       if (e instanceof DOMException && e.name === 'NotAllowedError') return;
-      // Some browsers reject audio:true in getDisplayMedia — retry without audio
+      console.error('[startShare] first attempt failed:', e);
+      // Some browsers reject audio constraints in getDisplayMedia — retry without audio
       try {
         const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
         const [video] = stream.getVideoTracks();
@@ -121,7 +122,8 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
         broadcastMeta({ sharing: true });
       } catch (e2) {
         if (e2 instanceof DOMException && e2.name === 'NotAllowedError') return;
-        setMediaError('Could not start screen sharing. Please try again.');
+        console.error('[startShare] retry failed:', e2);
+        setMediaError(`Could not start screen sharing: ${e2 instanceof Error ? e2.message : String(e2)}`);
       }
     }
   };
@@ -176,17 +178,14 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
     let stopAdapt: (() => void) | null = null;
     const pc = mc.peerConnection;
     if (!pc) return;
+    // Ensure all 3 slots exist with correct directions
     const existing = pc.getTransceivers();
     SLOT_KINDS.forEach((kind, i) => {
+      const dir = (i === TRACK_SLOT.mic) ? 'sendrecv' : isHostRef.current ? 'sendrecv' : 'recvonly';
       if (existing[i]) {
-        // Fix direction on already-negotiated transceivers
-        const dir = (i === TRACK_SLOT.mic) ? 'sendrecv' : isHostRef.current ? 'sendrecv' : 'recvonly';
-        existing[i].direction = dir;
+        try { existing[i].direction = dir; } catch {}
       } else {
-        const direction = (i === TRACK_SLOT.mic)
-          ? 'sendrecv'
-          : isHostRef.current ? 'sendrecv' : 'recvonly';
-        pc.addTransceiver(kind, { direction });
+        try { pc.addTransceiver(kind, { direction: dir }); } catch {}
       }
     });
     // Push current tracks once ICE connects (host may not be sharing yet at setup time)
@@ -240,16 +239,22 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
           // Guest: connect to host only
           const conn = peer.connect(slotId(roomCode, 0), { reliable: true });
           setupDataConn(conn);
-          // Build a dummy stream with silent audio + blank video so the offer SDP
-          // includes all 3 transceivers (screenVideo, screenAudio, mic)
+          // Use a silent audio-only stream for the call; we add video transceivers
+          // manually on the pc after PeerJS creates it via the 'call' open event
           const ctx = new AudioContext();
           const dest = ctx.createMediaStreamDestination();
-          const canvas = document.createElement('canvas');
-          canvas.width = 2; canvas.height = 2;
-          const blankVideo = canvas.captureStream(0).getVideoTracks()[0];
-          const dummyStream = new MediaStream([blankVideo, dest.stream.getAudioTracks()[0]]);
-          const mc = peer.call(slotId(roomCode, 0), dummyStream);
-          if (mc) setupMediaConn(mc);
+          const mc = peer.call(slotId(roomCode, 0), dest.stream);
+          if (mc) {
+            // Wait for PeerJS to create the peerConnection, then add video transceivers
+            const waitForPc = () => {
+              if (mc.peerConnection) {
+                setupMediaConn(mc);
+              } else {
+                setTimeout(waitForPc, 10);
+              }
+            };
+            waitForPc();
+          }
         } else {
           setStatus('connected');
         }
