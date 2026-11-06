@@ -216,11 +216,14 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
         setIsHost(host);
 
         if (!host) {
-          // Guest: connect to host only, answer with empty stream (no upload)
+          // Guest: connect to host only
           const conn = peer.connect(slotId(roomCode, 0), { reliable: true });
           setupDataConn(conn);
-          const emptyStream = new MediaStream();
-          const mc = peer.call(slotId(roomCode, 0), emptyStream);
+          // Call with a stream that has a silent audio track so PeerJS
+          // negotiates all transceivers (including host's video slots)
+          const ctx = new AudioContext();
+          const dest = ctx.createMediaStreamDestination();
+          const mc = peer.call(slotId(roomCode, 0), dest.stream);
           if (mc) setupMediaConn(mc);
         } else {
           setStatus('connected');
@@ -273,8 +276,8 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
 
   const peerList = Object.values(peers);
 
-  // Screen comes from whichever peer is sharing (only host ever shares)
-  const hostPeer = peerList.find(p => p.meta.sharing && p.tracks[TRACK_SLOT.screenVideo]);
+  // Screen comes from whichever peer has a live video track (host only ever shares)
+  const hostPeer = peerList.find(p => p.tracks[TRACK_SLOT.screenVideo]);
 
   const partnerScreen = useMemo(() => {
     if (!hostPeer) return null;
@@ -296,7 +299,7 @@ export function useWatchRoom(roomCode: string, maxPeers: number) {
     isHost,
     partnerOnline: peerList.length > 0,
     partnerCount: peerList.length,
-    partnerSharing: peerList.some(p => p.meta.sharing),
+    partnerSharing: peerList.some(p => p.meta.sharing || !!p.tracks[TRACK_SLOT.screenVideo]),
     partnerScreen,
     micStreams,
     localScreen,
